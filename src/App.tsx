@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { initializeApp } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
@@ -43,21 +43,20 @@ const firebaseConfig = {
 
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-// Utility to generate a unique ID for unauthenticated users
-const generateAnonymousUserId = (): string => {
-  let id = localStorage.getItem('anonymousUserId');
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem('anonymousUserId', id);
-  }
-  return id;
-};
+initializeApp(firebaseConfig);
+// Utility to generate a unique ID for unauthenticated users (for future use)
+// const generateAnonymousUserId = (): string => {
+//   let id = localStorage.getItem('anonymousUserId');
+//   if (!id) {
+//     id = crypto.randomUUID();
+//     localStorage.setItem('anonymousUserId', id);
+//   }
+//   return id;
+// };
 
 function App() {
   // State variables with explicit TypeScript types
   const [db, setDb] = useState<Firestore | null>(null);
-  const [auth, setAuth] = useState<Auth | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -74,23 +73,30 @@ function App() {
       const firebaseAuth: Auth = getAuth(app);
 
       setDb(firestore);
-      setAuth(firebaseAuth);
 
       onAuthStateChanged(firebaseAuth, async (user) => {
         if (user) {
+          // User is signed in, see docs for a list of available properties
+          // https://firebase.google.com/docs/reference/js/firebase.User
           setUserId(user.uid);
+          setIsAuthReady(true);
         } else {
-          // Sign in anonymously if no initial token or user
-          if (initialAuthToken) {
-            await signInWithCustomToken(firebaseAuth, initialAuthToken);
-          } else {
-            await signInAnonymously(firebaseAuth);
+          // User is signed out
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
+            } else {
+              await signInAnonymously(firebaseAuth);
+            }
+            // onAuthStateChanged will be called again with the new user
+          } catch (error) {
+            console.error("Error during sign-in:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            setMessage(`Error during sign-in: ${errorMessage}.`);
+            // If sign-in fails, we can't proceed.
+            setIsAuthReady(true); // Set to true to stop showing the loading screen
           }
-          // After anonymous sign-in, onAuthStateChanged will be called again with the anonymous user
-          // For now, if no user, we'll use a local anonymous ID for data scoping
-          setUserId(firebaseAuth.currentUser?.uid || generateAnonymousUserId());
         }
-        setIsAuthReady(true);
       });
     } catch (error: any) { // Use 'any' for error type if not specific
       console.error("Error initializing Firebase:", error);
