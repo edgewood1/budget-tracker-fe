@@ -27,5 +27,10 @@ jobs:
     - name: Build Next.js app
       run: yarn build
 
+<<<<<<<< HEAD:.github/workflows/main.yaml
     # - name: Run tests
     #   run: yarn test
+========
+    - name: Run tests
+      run: yarn test
+>>>>>>>> 36ff081e8372a4923d578f2053906fdf706fdb28:.github/workflows/main.yml
