@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { initializeApp } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import type { Auth } from 'firebase/auth';
-import { getFirestore, collection, query, onSnapshot, doc, setDoc, Firestore } from 'firebase/firestore';
+import { getFirestore, collection, query, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import type { Firestore } from 'firebase/firestore';
+import { usePlaidLink } from 'react-plaid-link';
 
 // Define an interface for the Category data structure
 interface Category {
@@ -21,8 +23,7 @@ declare const __firebase_config: string | undefined;
 declare const __initial_auth_token: string | undefined;
 
 // Using type assertions for __app_id, __firebase_config, __initial_auth_token
-const appId: string = (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id') as string;
-// const firebaseConfig: object = (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {}) as object;
+const appId: string = (typeof __app_id !== 'undefined' ? __app_id : 'local-dev-app-id') as string;
 const initialAuthToken: string | null = (typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null) as string | null;
 
 
@@ -43,16 +44,19 @@ const firebaseConfig = {
 
 
 // Initialize Firebase
-initializeApp(firebaseConfig);
+// initializeApp(firebaseConfig);
 // Utility to generate a unique ID for unauthenticated users (for future use)
-// const generateAnonymousUserId = (): string => {
-//   let id = localStorage.getItem('anonymousUserId');
-//   if (!id) {
-//     id = crypto.randomUUID();
-//     localStorage.setItem('anonymousUserId', id);
-//   }
-//   return id;
-// };
+const generateAnonymousUserId = (): string => {
+  let id = localStorage.getItem('anonymousUserId');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('anonymousUserId', id);
+  }
+  return id;
+};
+
+// IMPORTANT: Replace with your actual API Gateway Invoke URL
+const API_GATEWAY_URL = "https://3h8060ngd5.execute-api.us-east-1.amazonaws.com/dev";
 
 function App() {
   // State variables with explicit TypeScript types
@@ -65,12 +69,21 @@ function App() {
   const [message, setMessage] = useState<string>('');
   const [showAddCategoryModal, setShowAddCategoryModal] = useState<boolean>(false);
 
+  // Plaid integration state
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [isPlaidLoading, setIsPlaidLoading] = useState<boolean>(false);
+
+
   // Initialize Firebase and set up auth listener
   useEffect(() => {
     try {
+      if (!firebaseConfig || !('projectId' in firebaseConfig) || !firebaseConfig.projectId) {
+        throw new Error("Firebase 'projectId' not provided in configuration. Ensure .env.local is set up or Canvas variables are present.");
+      }
+      
       const app: FirebaseApp = initializeApp(firebaseConfig);
-      const firestore: Firestore = getFirestore(app);
-      const firebaseAuth: Auth = getAuth(app);
+      const firestore: any = getFirestore(app);
+      const firebaseAuth: any = getAuth(app);
 
       setDb(firestore);
 
@@ -104,10 +117,35 @@ function App() {
     }
   }, []);
 
+  // Fetch Plaid Link token when auth is ready
+  useEffect(() => {
+    if (isAuthReady && userId && !linkToken && !isPlaidLoading) {
+      const getLinkToken = async () => {
+        setIsPlaidLoading(true);
+        try {
+          const response = await fetch(`${API_GATEWAY_URL}/link-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: userId }),
+          });
+          if (!response.ok) throw new Error('Failed to fetch link token.');
+          const data = await response.json();
+          setLinkToken(data.link_token);
+          setMessage("Link token fetched. Ready to connect bank account.");
+        } catch (error: any) {
+          console.error("Error fetching link token:", error);
+          setMessage(`Error fetching link token: ${error.message}`);
+        } finally {
+          setIsPlaidLoading(false);
+        }
+      };
+      getLinkToken();
+    }
+  }, [isAuthReady, userId]);
+
   // Fetch categories when auth is ready
   useEffect(() => {
     if (db && userId && isAuthReady) {
-      // Construct the collection path including appId and userId for proper scoping
       const categoriesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/categories`);
       const q = query(categoriesCollectionRef);
 
@@ -125,12 +163,39 @@ function App() {
         setMessage(`Error fetching categories: ${error.message || 'Unknown error'}. Please try again.`);
       });
 
-      return () => unsubscribe(); // Cleanup listener on unmount
+      return () => unsubscribe();
     }
-  }, [db, userId, isAuthReady]); // Dependencies for useEffect
+  }, [db, userId, isAuthReady]);
+
+  // Plaid Link integration using the hook
+  const { open, ready, error } = usePlaidLink({
+    token: linkToken,
+    onSuccess: async (publicToken, metadata) => {
+      setMessage("Bank account connected! Exchanging public token for access token...");
+      try {
+        const response = await fetch(`${API_GATEWAY_URL}/exchange-public-token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ public_token: publicToken, userId: userId }),
+        });
+        if (!response.ok) throw new Error('Failed to exchange public token.');
+        setMessage("Access token saved to your database successfully!");
+      } catch (err: any) {
+        console.error("Error exchanging public token:", err);
+        setMessage(`Error exchanging public token: ${err.message}`);
+      }
+    },
+    onExit: (err, metadata) => {
+      console.log('Plaid Link exited:', err, metadata);
+      setMessage("Plaid Link flow was exited.");
+    },
+    onEvent: (eventName, metadata) => {
+      console.log('Plaid Link event:', eventName, metadata);
+    },
+  });
 
   const handleAddCategory = async (): Promise<void> => {
-    const parsedLimit = parseFloat(newCategoryLimit);
+    const parsedLimit = parseFloat(newCategoryName);
     if (!newCategoryName.trim() || isNaN(parsedLimit) || parsedLimit <= 0) {
       setMessage("Please enter a valid category name and a positive numeric limit.");
       return;
@@ -142,17 +207,15 @@ function App() {
     }
 
     try {
-      // Firestore document ID will be a lowercase, hyphenated version of the category name
       const categoryDocId = newCategoryName.toLowerCase().replace(/\s+/g, '-');
-      const categoryData: Omit<Category, 'id'> = { // Omit 'id' as it's the doc ID
+      const categoryData: Omit<Category, 'id'> = {
         name: newCategoryName.trim(),
         weeklyLimit: parsedLimit,
-        currentWeekSpending: 0, // Initialize spending to 0
+        currentWeekSpending: 0,
         lastUpdated: new Date().toISOString(),
       };
       const categoriesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/categories`);
       
-      // Set the document with the derived ID
       await setDoc(doc(categoriesCollectionRef, categoryDocId), categoryData);
       setMessage(`Category "${newCategoryName}" added successfully!`);
       setNewCategoryName('');
@@ -165,10 +228,9 @@ function App() {
   };
 
   const handleUpdateLimit = async (categoryId: string, currentLimit: number): Promise<void> => {
-    // Using window.prompt for simplicity, but for production, use a custom modal
     const newLimitStr: string | null = prompt(`Enter new weekly limit for ${categoryId}:`, currentLimit.toString());
     
-    if (newLimitStr === null) { // User cancelled the prompt
+    if (newLimitStr === null) {
       return;
     }
 
@@ -185,7 +247,6 @@ function App() {
 
     try {
       const categoryDocRef = doc(db, `artifacts/${appId}/users/${userId}/categories`, categoryId);
-      // Use setDoc with { merge: true } to only update the weeklyLimit field
       await setDoc(categoryDocRef, { weeklyLimit: newLimit, lastUpdated: new Date().toISOString() }, { merge: true });
       setMessage(`Limit for "${categoryId}" updated successfully!`);
     } catch (error: any) {
@@ -194,7 +255,6 @@ function App() {
     }
   };
 
-  // Placeholder for future transaction fetching and categorization
   const fetchAndCategorizeTransactions = async (): Promise<void> => {
     setMessage("Fetching and categorizing transactions (backend integration needed)...");
     // In a real application, this would trigger a backend Lambda function
@@ -332,15 +392,20 @@ function App() {
           </div>
         )}
 
-        <div className="mt-8 pt-6 border-t border-gray-200 text-center">
+        <div className="mt-8 pt-6 border-t border-gray-200 text-center space-y-4">
           <button
-            onClick={fetchAndCategorizeTransactions}
-            className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+            onClick={() => open()}
+            disabled={!ready || linkToken === null}
+            className={`font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300 ease-in-out transform hover:scale-105
+              ${ready && linkToken !== null
+                ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                : 'bg-gray-400 text-gray-700 cursor-not-allowed'
+              }`}
           >
-            Simulate Fetch & Categorize Transactions
+            Connect a Bank Account
           </button>
           <p className="text-sm text-gray-500 mt-2">
-            (This button currently only shows a message; backend integration is required for full functionality.)
+            (The "Connect a Bank Account" button will be active once the backend responds with a link token.)
           </p>
         </div>
       </div>
