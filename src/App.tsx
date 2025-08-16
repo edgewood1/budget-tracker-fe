@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { ChangeEvent } from 'react';
 import { initializeApp } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import type { Auth } from 'firebase/auth';
 import { getFirestore, collection, query, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import { usePlaidLink } from 'react-plaid-link';
@@ -46,14 +45,14 @@ const firebaseConfig = {
 // Initialize Firebase
 // initializeApp(firebaseConfig);
 // Utility to generate a unique ID for unauthenticated users (for future use)
-const generateAnonymousUserId = (): string => {
-  let id = localStorage.getItem('anonymousUserId');
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem('anonymousUserId', id);
-  }
-  return id;
-};
+// const generateAnonymousUserId = (): string => {
+//   let id = localStorage.getItem('anonymousUserId');
+//   if (!id) {
+//     id = crypto.randomUUID();
+//     localStorage.setItem('anonymousUserId', id);
+//   }
+//   return id;
+// };
 
 // IMPORTANT: Replace with your actual API Gateway Invoke URL
 const API_GATEWAY_URL = "https://3h8060ngd5.execute-api.us-east-1.amazonaws.com/dev";
@@ -168,9 +167,9 @@ function App() {
   }, [db, userId, isAuthReady]);
 
   // Plaid Link integration using the hook
-  const { open, ready, error } = usePlaidLink({
+  const { open, ready } = usePlaidLink({
     token: linkToken,
-    onSuccess: async (publicToken, metadata) => {
+    onSuccess: async (publicToken, _metadata) => {
       setMessage("Bank account connected! Exchanging public token for access token...");
       try {
         const response = await fetch(`${API_GATEWAY_URL}/exchange-public-token`, {
@@ -255,13 +254,14 @@ function App() {
     }
   };
 
-  const fetchAndCategorizeTransactions = async (): Promise<void> => {
-    setMessage("Fetching and categorizing transactions (backend integration needed)...");
-    // In a real application, this would trigger a backend Lambda function
-    // that connects to Plaid, fetches transactions, categorizes them,
-    // and updates the 'currentWeekSpending' for each category in Firestore.
-    // For now, we'll just simulate a message.
-  };
+  // Future function for backend integration
+  // const fetchAndCategorizeTransactions = async (): Promise<void> => {
+  //   setMessage("Fetching and categorizing transactions (backend integration needed)...");
+  //   // In a real application, this would trigger a backend Lambda function
+  //   // that connects to Plaid, fetches transactions, categorizes them,
+  //   // and updates the 'currentWeekSpending' for each category in Firestore.
+  //   // For now, we'll just simulate a message.
+  // };
 
   if (!isAuthReady) {
     return (
